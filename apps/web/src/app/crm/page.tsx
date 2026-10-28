@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, ExternalLink, RefreshCw } from 'lucide-react';
-import { api, type CrmEntry } from '@/lib/api';
+import { api, type CrmEntry, type ZeroStatus } from '@/lib/api';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -40,12 +40,15 @@ function ZeroStatusBadge({ status }: { status: CrmEntry['zeroSync']['status'] })
 
 export default function CrmPage() {
   const [entries, setEntries] = useState<CrmEntry[]>([]);
+  const [status, setStatus] = useState<ZeroStatus | null>(null);
   const [filter, setFilter] = useState('all');
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
     api.getCrm().then(setEntries);
+    api.getZeroStatus().then(setStatus).catch(() => undefined);
   }, []);
 
   async function syncEntry(id: string) {
@@ -62,21 +65,58 @@ export default function CrmPage() {
     }
   }
 
+  async function syncAll() {
+    setSyncingAll(true);
+    setMessage('');
+    try {
+      const res = await api.syncAllCrmToZero();
+      const refreshed = await api.getCrm();
+      setEntries(refreshed);
+      setMessage(`Synced ${res.synced} of ${res.total} CRM entries to Zero.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Sync failed.');
+    } finally {
+      setSyncingAll(false);
+    }
+  }
+
   const types = ['all', ...new Set(entries.map((entry) => entry.entityType))];
   const filtered = filter === 'all' ? entries : entries.filter((entry) => entry.entityType === filter);
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-bold gradient-text">Proof CRM</h1>
-        <p className="text-muted-foreground mt-2">
-          Store proof assets, trust signals, GTM assets, campaigns, and conversion outcomes.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold gradient-text">Proof CRM</h1>
+          <p className="text-muted-foreground mt-2">
+            Store proof assets, trust signals, GTM assets, campaigns, and conversion outcomes.
+          </p>
+        </div>
+        <Button onClick={syncAll} disabled={syncingAll || status?.mode !== 'live'}>
+          {syncingAll ? 'Syncing…' : 'Sync all to Zero'}
+        </Button>
       </div>
-      <Card className="border-cyan-500/30 bg-cyan-500/5">
-        <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 mb-2">Zero Integration Ready</Badge>
-        <p className="text-sm text-muted-foreground">Connect live integrations in Settings when you&apos;re ready to go beyond demo mode.</p>
+
+      <Card className="border-cyan-500/30 bg-cyan-500/5 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30">
+            {status?.mode === 'live' ? 'Zero Connected' : 'Zero Demo Mode'}
+          </Badge>
+          {status?.database.connected && (
+            <Badge className="bg-emerald-500/20 text-emerald-400">PostgreSQL Connected</Badge>
+          )}
+          {status?.database.configured && !status.database.connected && (
+            <Badge className="bg-amber-500/20 text-amber-300">PostgreSQL Offline</Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {status?.mode === 'live'
+            ? `Records sync to ${status.recordsUrl} and are logged in PostgreSQL when the database is available.`
+            : 'Add ZERO_API_KEY and ZERO_API_URL in .env to enable live Zero sync.'}
+        </p>
+        {message && <p className="text-sm text-cyan-300">{message}</p>}
       </Card>
+
       <div className="flex flex-wrap gap-2">
         {types.map((type) => (
           <button

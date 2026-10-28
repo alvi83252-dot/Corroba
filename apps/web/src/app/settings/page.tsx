@@ -13,7 +13,7 @@ interface Settings {
 }
 
 const integrations = [
-  { key: 'unify', name: 'Unify', role: 'Proof expansion from customer conversations' },
+  { key: 'unify', name: 'UnifyGTM', role: 'Outbound proof sync via Data API' },
   { key: 'gtmengineer', name: 'GTMengineer.dev', role: 'GTM system and playbook generation' },
   { key: 'faxxing', name: 'Faxxing', role: 'Social media proof validation' },
   { key: 'zero', name: 'Zero', role: 'Proof CRM sync' },

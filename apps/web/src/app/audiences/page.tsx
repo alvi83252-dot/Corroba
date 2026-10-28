@@ -90,7 +90,7 @@ export default function AudiencesPage() {
               <Badge className="bg-secondary text-muted-foreground">{ragStatus.chunks} chunks indexed</Badge>
               <Badge className="bg-secondary text-muted-foreground">{ragStatus.embeddingProvider} embeddings</Badge>
               <Badge className={ragStatus.unifyConfigured ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}>
-                {ragStatus.unifyConfigured ? 'Unify API connected' : 'Demo conversations'}
+                {ragStatus.unifyConfigured ? 'UnifyGTM connected' : 'Demo conversations'}
               </Badge>
             </>
           )}

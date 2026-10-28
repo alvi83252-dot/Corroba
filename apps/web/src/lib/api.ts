@@ -120,6 +120,8 @@ export interface UnifyNotificationEvent {
   message: string;
   timestamp: string;
   receivedAt: string;
+  source?: 'unifygtm' | 'simulated';
+  verified?: boolean;
 }
 
 export interface UnifySubscription {
@@ -128,15 +130,53 @@ export interface UnifySubscription {
   subjectFilter: string;
   webhookUrl: string;
   createdAt: string;
+  source?: 'unifygtm' | 'simulated';
 }
 
 export interface UnifyNotificationsStatus {
   service: string;
-  mode: string;
+  mode: 'live' | 'simulated' | string;
   provider: string;
+  unifygtm?: {
+    configured: boolean;
+    dataApiUrl: string;
+    proofObject: string;
+  };
   subscriptions: number;
   eventsReceived: number;
   endpoints: Record<string, string>;
+}
+
+export interface UnifyGtmStatus {
+  service: string;
+  mode: 'live' | 'demo' | string;
+  provider: string;
+  configured: boolean;
+  dataApiUrl: string;
+  proofObject: string;
+  companyDomain?: string;
+  companyName?: string;
+}
+
+export interface ZeroStatus {
+  service: string;
+  mode: 'live' | 'demo' | string;
+  provider: string;
+  configured: boolean;
+  recordsUrl: string;
+  database: {
+    configured: boolean;
+    connected: boolean;
+    url?: string;
+  };
+}
+
+export interface ZeroSyncResponse {
+  synced: boolean;
+  mode: string;
+  zeroId?: string;
+  error?: string;
+  stored?: unknown;
 }
 
 export interface DashboardData {
@@ -188,6 +228,9 @@ export const api = {
   queryRag: (query: string, topK = 5) =>
     request<RagQueryResult>('/api/rag/query', { method: 'POST', body: JSON.stringify({ query, topK }) }),
   getUnifyConversations: () => request<{ conversations: unknown[]; source: string; total: number }>('/api/unify/conversations'),
+  getUnifyGtmStatus: () => request<UnifyGtmStatus>('/api/unify/status'),
+  syncUnifyGtmSignals: () =>
+    request<{ synced: number; total: number; results: unknown[] }>('/api/unify/sync-signals', { method: 'POST' }),
   getUnifyNotificationsStatus: () => request<UnifyNotificationsStatus>('/api/unify/notifications/status'),
   getUnifySubscriptions: () => request<UnifySubscription[]>('/api/unify/notifications/subscriptions'),
   getUnifyNotificationEvents: () => request<UnifyNotificationEvent[]>('/api/unify/notifications/events'),
@@ -197,7 +240,7 @@ export const api = {
       { method: 'POST', body: JSON.stringify(data) }
     ),
   testUnifyNotification: (data: { event: string; conversationId: string; message: string }) =>
-    request<{ status: string; subscriptionsNotified: number }>('/api/unify/notifications/test', {
+    request<{ status: string; subscriptionsNotified: number; mode: string; note?: string }>('/api/unify/notifications/test', {
       method: 'POST',
       body: JSON.stringify(data)
     }),
@@ -215,10 +258,13 @@ export const api = {
       body: JSON.stringify({ signalId })
     }),
   getCrm: () => request<CrmEntry[]>('/api/crm'),
+  getZeroStatus: () => request<ZeroStatus>('/api/crm/status'),
   syncCrmEntry: (id: string) =>
     request<{ entry: CrmEntry; result: CrmSyncState & { synced: boolean; mode: string } }>(`/api/crm/sync/${id}`, {
       method: 'POST'
     }),
+  syncAllCrmToZero: () =>
+    request<{ synced: number; total: number; results: unknown[] }>('/api/crm/sync-all', { method: 'POST' }),
   getGrowth: () => request<unknown[]>('/api/growth'),
   analyzeGrowth: () => request<{ recommendations: unknown[]; poweredBy: string }>('/api/growth/analyze', { method: 'POST' }),
   getAnalytics: () => request<unknown>('/api/analytics'),

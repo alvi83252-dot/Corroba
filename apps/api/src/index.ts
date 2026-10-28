@@ -5,11 +5,9 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '../../..');
 if (process.env.DOTENV_CONFIG_PATH) {
-  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH });
+  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH, override: true });
 }
-dotenv.config({ path: resolve(rootDir, '.env') });
-dotenv.config({ path: resolve(rootDir, '.env.example') });
-dotenv.config();
+dotenv.config({ path: resolve(rootDir, '.env'), override: true });
 import { serve } from '@hono/node-server';
 import app from './routes/index.js';
 import { bootstrapRagIndex } from './rag/pipeline.js';

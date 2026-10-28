@@ -5,6 +5,7 @@ import { getStore, addSource, addSignals, DEMO_ANALYTICS, resetStore, WORKSPACE_
 import type { CrmEntry } from '../store/memory.js';
 import { getZeroSyncStatesForEntries, saveZeroSyncResult } from '../db/zeroSync.js';
 import { parseFileContent, validateUploadFile, FileParseError } from '../ai/file-parser.js';
+import { getZeroSyncStatesForEntries, saveZeroSyncResult } from '../db/zeroSync.js';
 import {
   expandAudienceWithContext,
   generateGtmSystem,
@@ -26,8 +27,9 @@ import { SUPPORTED_UPLOAD_TYPES, SUPPORTED_PASTE_TYPES } from '../rag/supported-
 import { loadDemoSources } from '../rag/demo-data-loader.js';
 import { cleanTrustSignals } from '../utils/signals.js';
 import { resetUnifyNotifications } from '../integrations/unify-notifications.js';
-import { fetchUnifyConversations } from '../integrations/unify.js';
+import { fetchUnifyConversations, getUnifyGtmStatus, listUnifyGtmObjects, syncTrustSignalsToUnifyGtm } from '../integrations/unify.js';
 import { validateProofOnSocialMedia, getFaxxingStatus } from '../integrations/faxxing.js';
+import { getZeroStatus, isDatabaseConnected } from '../integrations/zero.js';
 import unifyNotificationsRoutes from './unify-notifications.js';
 import unifyAnalyticsRoutes from './unify-analytics.js';
 import { emitProofEvent } from '../integrations/unify-analytics.js';
@@ -99,6 +101,34 @@ function resolveCrmEntity(entry: CrmEntry): Record<string, unknown> | undefined 
   }
 }
 
+async function syncCrmEntryToZero(entry: CrmEntry) {
+  const entity = resolveCrmEntity(entry);
+  if (!entity) {
+    return { entry, result: null, error: `Linked ${entry.entityType} record not found` };
+  }
+
+  const syncInput = {
+    type: entry.entityType,
+    workspaceId: WORKSPACE_ID,
+    entityId: entry.entityId,
+    title: entry.title,
+    entity,
+    crmEntry: entry as unknown as Record<string, unknown>
+  };
+
+  const result = await syncToZero(syncInput);
+  const persistedSync = await saveZeroSyncResult(syncInput, result);
+  const updated = updateCrmEntryZeroSync(entry.id, {
+    status: persistedSync?.status ?? result.status,
+    zeroId: persistedSync?.zeroId ?? result.zeroId,
+    zeroUrl: persistedSync?.zeroUrl ?? result.zeroUrl,
+    error: persistedSync?.error ?? result.error,
+    lastSyncedAt: persistedSync?.lastSyncedAt ?? result.lastSyncedAt
+  });
+
+  return { entry: updated ?? entry, result, error: undefined };
+}
+
 app.get('/health', (c) => c.json({ status: 'ok', service: 'proofloop-api', demo: true }));
 
 app.get('/api/dashboard', (c) => {
@@ -140,6 +170,9 @@ app.post('/api/sources/text', async (c) => {
   source.status = 'processed';
   await syncToZero({
     type: 'source',
+    workspaceId: WORKSPACE_ID,
+    entityId: source.id,
+    title: source.title,
     source: source as unknown as Record<string, unknown>,
     signals: signals as unknown as Record<string, unknown>[]
   });
@@ -231,7 +264,11 @@ app.post('/api/discovery/demo', async (c) => {
 
 app.post('/api/discovery/run', async (c) => {
   const body = await c.req.json<{ content: string }>();
-  const discovery = await discoverProofWithRag(body.content ?? '', { sourceId: `temp-${Date.now()}`, title: 'Discovery Run', type: 'paste' });
+  const discovery = await discoverProofWithRag(body.content ?? '', {
+    sourceId: `temp-${Date.now()}`,
+    title: 'Discovery Run',
+    type: 'paste'
+  });
   const validated = await Promise.all(discovery.signals.map((s) => validateProof(s)));
   return c.json({ signals: validated, rag: discovery });
 });
@@ -268,7 +305,6 @@ app.post('/api/audiences/expand', async (c) => {
   });
 });
 
-/** RAG Pipeline endpoints */
 app.get('/api/rag/status', (c) => c.json(getRagStatus()));
 
 app.post('/api/rag/ingest', async (c) => {
@@ -293,7 +329,17 @@ app.get('/api/unify/conversations', async (c) => {
   }
 });
 
-/** Unify — Simulated Mitel Notifications API (no CloudLink tokens required) */
+app.get('/api/unify/status', (c) => c.json(getUnifyGtmStatus()));
+
+app.get('/api/unify/objects', async (c) => c.json(await listUnifyGtmObjects()));
+
+app.post('/api/unify/sync-signals', async (c) => {
+  const store = getStore();
+  const signals = [...store.signals].sort((a, b) => b.proofScore - a.proofScore).slice(0, 10);
+  const result = await syncTrustSignalsToUnifyGtm(signals);
+  return c.json(result);
+});
+
 app.route('/api/unify/notifications', unifyNotificationsRoutes);
 
 /** Unify GTM — Analytics API (intent events: page/track/identify) */
@@ -305,7 +351,6 @@ app.get('/api/rag/supported-types', (c) =>
 
 app.get('/api/rag/demo-data', (c) => c.json(getDemoDataSummary()));
 
-/** Faxxing — Simulated social media proof validation */
 app.get('/api/faxxing/status', (c) => c.json(getFaxxingStatus()));
 
 app.post('/api/faxxing/validate', async (c) => {
@@ -401,40 +446,37 @@ app.get('/api/crm', async (c) => {
   return c.json(persistedEntries ?? entries);
 });
 
+app.get('/api/crm/status', async (c) => {
+  return c.json(await getZeroStatus(await isDatabaseConnected()));
+});
+
 app.post('/api/crm/sync/:id', async (c) => {
   const entry = getStore().crmEntries.find((item) => item.id === c.req.param('id'));
   if (!entry) return c.json({ error: 'CRM entry not found' }, 404);
 
-  const entity = resolveCrmEntity(entry);
-  if (!entity) return c.json({ error: `Linked ${entry.entityType} record not found` }, 404);
-
-  const syncInput = {
-    type: entry.entityType,
-    workspaceId: WORKSPACE_ID,
-    entityId: entry.entityId,
-    title: entry.title,
-    entity,
-    crmEntry: entry as unknown as Record<string, unknown>
-  };
-
-  const result = await syncToZero(syncInput);
-  const persistedSync = await saveZeroSyncResult(syncInput, result);
-
-  const updated = updateCrmEntryZeroSync(entry.id, {
-    status: persistedSync?.status ?? result.status,
-    zeroId: persistedSync?.zeroId ?? result.zeroId,
-    zeroUrl: persistedSync?.zeroUrl ?? result.zeroUrl,
-    error: persistedSync?.error ?? result.error,
-    lastSyncedAt: persistedSync?.lastSyncedAt ?? result.lastSyncedAt
-  });
+  const { entry: updated, result, error } = await syncCrmEntryToZero(entry);
+  if (!result) return c.json({ error }, 404);
 
   return c.json({ result, entry: updated });
 });
 
-app.post('/api/crm/sync', async (c) => {
-  const body = await c.req.json();
-  const result = await syncToZero(body);
-  return c.json(result);
+app.post('/api/crm/sync-all', async (c) => {
+  const store = getStore();
+  const results = [];
+
+  for (const entry of store.crmEntries) {
+    const { entry: updated, result, error } = await syncCrmEntryToZero(entry);
+    results.push({
+      entityId: entry.entityId,
+      synced: result?.synced ?? false,
+      status: result?.status,
+      error: error ?? result?.error,
+      entry: updated
+    });
+  }
+
+  const synced = results.filter((r) => r.synced).length;
+  return c.json({ synced, total: results.length, results });
 });
 
 app.get('/api/growth', (c) => c.json(getStore().recommendations));

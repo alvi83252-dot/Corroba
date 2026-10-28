@@ -1,4 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+import { DEFAULT_WORKSPACE_ID } from '../db/connection.js';
+import { isZeroConfigured } from '../integrations/zero.js';
+import { isUnifyGtmConfigured } from '../integrations/unifygtm.js';
 import type { ExtractedSignal, AudienceMatch, ContentAssetResult, GrowthRecommendationResult } from '../data/demo.js';
 import {
   DEMO_SOURCES,
@@ -78,7 +81,7 @@ export interface Store {
   settings: { demoMode: boolean; aiProvider: string; integrations: Record<string, boolean> };
 }
 
-const WORKSPACE_ID = 'demo-workspace-001';
+const WORKSPACE_ID = DEFAULT_WORKSPACE_ID;
 
 function initStore(): Store {
   const now = new Date().toISOString();
@@ -138,10 +141,10 @@ function initStore(): Store {
       demoMode: true,
       aiProvider: 'demo',
       integrations: {
-        unify: !!process.env.UNIFY_API_KEY,
+        unify: isUnifyGtmConfigured(),
         gtmengineer: true,
         faxxing: !!process.env.FAXXING_API_KEY,
-        zero: !!process.env.ZERO_API_KEY,
+        zero: isZeroConfigured(),
         lightfern: !!process.env.LIGHTFERN_API_KEY,
         scaile: !!process.env.SCAILE_API_KEY
       }

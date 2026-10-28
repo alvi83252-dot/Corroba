@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api, type UnifyNotificationEvent, type UnifyNotificationsStatus, type UnifySubscription } from '@/lib/api';
+import { api, type UnifyGtmStatus, type UnifyNotificationEvent, type UnifyNotificationsStatus, type UnifySubscription } from '@/lib/api';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -18,20 +18,23 @@ export default function UnifyNotificationsPage() {
   const [testEvent, setTestEvent] = useState('message.created');
   const [conversationId, setConversationId] = useState('conv-recruitment-001');
   const [message, setMessage] = useState('Customer saved £40,000 in operational costs after 3 months.');
-  const [loading, setLoading] = useState<'subscribe' | 'test' | 'demo' | null>(null);
+  const [gtmStatus, setGtmStatus] = useState<UnifyGtmStatus | null>(null);
+  const [loading, setLoading] = useState<'subscribe' | 'test' | 'demo' | 'sync' | null>(null);
   const [error, setError] = useState('');
   const [lastResult, setLastResult] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const [s, subs, ev] = await Promise.all([
+      const [s, subs, ev, gtm] = await Promise.all([
         api.getUnifyNotificationsStatus(),
         api.getUnifySubscriptions(),
-        api.getUnifyNotificationEvents()
+        api.getUnifyNotificationEvents(),
+        api.getUnifyGtmStatus()
       ]);
       setStatus(s);
       setSubscriptions(subs);
       setEvents(ev);
+      setGtmStatus(gtm);
     } catch {
       /* server starting */
     }
@@ -66,7 +69,10 @@ export default function UnifyNotificationsPage() {
     setError('');
     try {
       const res = await api.testUnifyNotification({ event: testEvent, conversationId, message });
-      setLastResult(`Test notification sent to ${res.subscriptionsNotified} listener${res.subscriptionsNotified !== 1 ? 's' : ''}.`);
+      setLastResult(
+        res.note ??
+          `Test notification sent to ${res.subscriptionsNotified} listener${res.subscriptionsNotified !== 1 ? 's' : ''}.`
+      );
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Test failed');
@@ -98,23 +104,48 @@ export default function UnifyNotificationsPage() {
     }
   }
 
+  async function syncToUnifyGtm() {
+    setLoading('sync');
+    setError('');
+    try {
+      const res = await api.syncUnifyGtmSignals();
+      setLastResult(`Synced proof signals to UnifyGTM company ${gtmStatus?.companyName ?? 'BTM.com'} (${gtmStatus?.companyDomain ?? 'btm.com'}).`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'UnifyGTM sync failed');
+    } finally {
+      setLoading(null);
+    }
+  }
+
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold gradient-text">Unify Notifications</h1>
+          <h1 className="text-3xl font-bold gradient-text">UnifyGTM</h1>
           <p className="text-muted-foreground mt-2">
-            Get live alerts when new customer proof appears in conversations — powered by Unify (demo mode, no setup required).
+            Push ranked proof signals into UnifyGTM outbound infrastructure and preview local proof alerts.
           </p>
         </div>
-        <Button size="lg" onClick={runQuickDemo} disabled={loading !== null} className="min-w-[220px]">
-          {loading === 'demo' ? 'Running demo…' : '⚡ Quick Demo (Subscribe + Test)'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="lg" onClick={syncToUnifyGtm} disabled={loading !== null || gtmStatus?.mode !== 'live'}>
+            {loading === 'sync' ? 'Syncing…' : '↑ Sync signals to UnifyGTM'}
+          </Button>
+          <Button size="lg" variant="outline" onClick={runQuickDemo} disabled={loading !== null} className="min-w-[220px]">
+            {loading === 'demo' ? 'Running demo…' : '⚡ Quick Demo (Subscribe + Test)'}
+          </Button>
+        </div>
       </div>
 
       <Card className="border-emerald-500/30 bg-emerald-500/5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className="bg-emerald-500/20 text-emerald-400">Unify Connected</Badge>
+          {gtmStatus?.mode === 'live' ? (
+            <Badge className="bg-emerald-500/20 text-emerald-400">UnifyGTM Connected</Badge>
+          ) : (
+            <Badge className="bg-amber-500/20 text-amber-300">UnifyGTM Demo Mode</Badge>
+          )}
+          {status?.mode === 'live' ? (
+            <Badge className="bg-blue-500/20 text-blue-300">Live API key</Badge>
+          ) : null}
           {status && (
             <>
               <Badge className="bg-secondary text-muted-foreground">{status.subscriptions} active listeners</Badge>
@@ -123,7 +154,9 @@ export default function UnifyNotificationsPage() {
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          Notifications are delivered automatically to ProofLoop when customer proof is detected in conversations.
+          {gtmStatus?.mode === 'live'
+            ? `Proof signals upsert to company "${gtmStatus.companyName ?? 'BTM.com'}" (${gtmStatus.companyDomain ?? 'btm.com'}) via UnifyGTM Data API.`
+            : 'Add UNIFYGTM_API_KEY to .env to enable live UnifyGTM sync.'}
         </p>
       </Card>
 
@@ -145,6 +178,7 @@ export default function UnifyNotificationsPage() {
           <input
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
+            placeholder="conversations (maps to platform-api-conversations)"
             className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
           />
           <label className="block text-sm font-medium text-foreground">Filter by subject</label>
@@ -188,15 +222,20 @@ export default function UnifyNotificationsPage() {
             rows={3}
             className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
+          {status?.mode === 'live' && (
+            <p className="text-xs text-muted-foreground">
+              In live mode, use Sync signals to UnifyGTM — local test fan-out is demo-only.
+            </p>
+          )}
           <div className="pt-4 border-t border-border">
             <Button
               size="lg"
               variant={subscriptions.length === 0 ? 'outline' : 'default'}
               onClick={handleTest}
-              disabled={loading !== null || subscriptions.length === 0}
+              disabled={loading !== null || subscriptions.length === 0 || status?.mode === 'live'}
               className="w-full"
             >
-              {loading === 'test' ? 'Sending…' : '→ Send test notification'}
+              {loading === 'test' ? 'Sending…' : status?.mode === 'live' ? 'Test disabled in live mode' : '→ Send test notification'}
             </Button>
           </div>
           {subscriptions.length === 0 && (
@@ -216,6 +255,9 @@ export default function UnifyNotificationsPage() {
                 <div className="flex flex-wrap gap-2">
                   <Badge className="bg-primary/20 text-primary">{sub.topic}</Badge>
                   <Badge className="bg-secondary text-muted-foreground">{sub.subjectFilter}</Badge>
+                  {sub.source === 'unifygtm' && (
+                    <Badge className="bg-emerald-500/20 text-emerald-400">UnifyGTM</Badge>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">Active since {new Date(sub.createdAt).toLocaleString()}</p>
               </Card>
@@ -238,6 +280,9 @@ export default function UnifyNotificationsPage() {
               <Card key={ev.id} className="space-y-2 py-4 border-l-4 border-l-emerald-500/50">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className="bg-emerald-500/20 text-emerald-400">{ev.event}</Badge>
+                  {ev.source === 'unifygtm' && (
+                    <Badge className="bg-blue-500/20 text-blue-300">UnifyGTM</Badge>
+                  )}
                   <span className="text-xs text-muted-foreground">{ev.conversationId}</span>
                 </div>
                 <p className="text-sm">&ldquo;{ev.message}&rdquo;</p>

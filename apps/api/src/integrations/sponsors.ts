@@ -147,6 +147,7 @@ export async function amplifyProof(signal: ExtractedSignal): Promise<ContentAsse
     content: asset.content.replace('£40,000', signal.quote.match(/[£$€][\d,]+/)?.[0] ?? '£40,000')
   }));
 }
+
 /** Scaile — Growth Recommendation Engine (integration point) */
 export async function getGrowthRecommendations(signals: ExtractedSignal[]): Promise<GrowthRecommendationResult[]> {
   if (process.env.SCAILE_API_KEY && process.env.SCAILE_API_URL) {

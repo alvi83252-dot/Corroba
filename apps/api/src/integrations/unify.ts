@@ -1,9 +1,15 @@
 /**
- * Unify — Conversations API client
- * Base URL: https://chat.eu.api.mitel.io/2017-09-01
- * Endpoint: GET /conversations
- * Auth: Authorization: Bearer <token>
+ * UnifyGTM integration surface for ProofLoop
+ * Uses UnifyGTM Data API for outbound proof sync; demo conversations for RAG discovery.
  */
+
+import {
+  getUnifyGtmStatus,
+  isUnifyGtmConfigured,
+  listUnifyGtmObjects,
+  syncTrustSignalsToUnifyGtm,
+  upsertProofToUnifyGtm
+} from './unifygtm.js';
 
 export interface UnifyConversation {
   id: string;
@@ -14,22 +20,11 @@ export interface UnifyConversation {
 
 export interface UnifyConversationsResponse {
   conversations: UnifyConversation[];
-  source: 'unify' | 'demo';
+  source: 'unifygtm' | 'demo';
   total: number;
 }
 
-const DEFAULT_UNIFY_BASE = 'https://chat.eu.api.mitel.io/2017-09-01';
-
-export function getUnifyBaseUrl(): string {
-  const url = process.env.UNIFY_API_URL?.trim();
-  return url || DEFAULT_UNIFY_BASE;
-}
-
-export function isUnifyConfigured(): boolean {
-  return Boolean(process.env.UNIFY_API_KEY);
-}
-
-/** Demo conversations mirroring real customer proof in chat/support contexts */
+/** Demo conversation corpus for proof discovery (UnifyGTM has no conversations API) */
 export const DEMO_UNIFY_CONVERSATIONS: UnifyConversation[] = [
   {
     id: 'conv-recruitment-001',
@@ -74,69 +69,12 @@ Customer: Customer satisfaction scores up 28 points after we started leading wit
   }
 ];
 
-function extractTextFromRecord(record: unknown, depth = 0): string {
-  if (depth > 6 || record == null) return '';
-  if (typeof record === 'string') return record;
-  if (typeof record === 'number' || typeof record === 'boolean') return String(record);
-
-  if (Array.isArray(record)) {
-    return record.map((item) => extractTextFromRecord(item, depth + 1)).filter(Boolean).join('\n');
-  }
-
-  if (typeof record === 'object') {
-    const obj = record as Record<string, unknown>;
-    const priorityKeys = ['body', 'content', 'text', 'message', 'messages', 'transcript', 'summary', 'subject', 'title', 'description'];
-    const parts: string[] = [];
-
-    for (const key of priorityKeys) {
-      if (obj[key]) parts.push(extractTextFromRecord(obj[key], depth + 1));
-    }
-
-    if (parts.length === 0) {
-      for (const value of Object.values(obj)) {
-        if (typeof value === 'string' && value.length > 10) parts.push(value);
-      }
-    }
-
-    return parts.filter(Boolean).join('\n');
-  }
-
-  return '';
+export function isUnifyConfigured(): boolean {
+  return isUnifyGtmConfigured();
 }
 
-function normalizeConversation(raw: Record<string, unknown>, index: number): UnifyConversation | null {
-  const text = extractTextFromRecord(raw).trim();
-  if (text.length < 20) return null;
-
-  const id = String(raw.id ?? raw.conversationId ?? raw.uuid ?? `conv-${index}`);
-  const title = String(raw.title ?? raw.subject ?? raw.name ?? raw.topic ?? `Conversation ${index + 1}`);
-
-  const metadata: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-      metadata[k] = v;
-    }
-  }
-
-  return { id, title, text, metadata };
-}
-
-function parseConversationsPayload(payload: unknown): UnifyConversation[] {
-  let items: unknown[] = [];
-
-  if (Array.isArray(payload)) {
-    items = payload;
-  } else if (payload && typeof payload === 'object') {
-    const obj = payload as Record<string, unknown>;
-    if (Array.isArray(obj.conversations)) items = obj.conversations;
-    else if (Array.isArray(obj.items)) items = obj.items;
-    else if (Array.isArray(obj.data)) items = obj.data;
-    else if (Array.isArray(obj.results)) items = obj.results;
-  }
-
-  return items
-    .map((item, i) => (item && typeof item === 'object' ? normalizeConversation(item as Record<string, unknown>, i) : null))
-    .filter((c): c is UnifyConversation => c !== null);
+export function getUnifyBaseUrl(): string {
+  return getUnifyGtmStatus().dataApiUrl;
 }
 
 /** Fetch conversations from Unify / Mitel API */
@@ -149,3 +87,11 @@ function parseConversationsPayload(payload: unknown): UnifyConversation[] {
 export async function fetchUnifyConversations(): Promise<UnifyConversationsResponse> {
   return { conversations: DEMO_UNIFY_CONVERSATIONS, source: 'demo', total: DEMO_UNIFY_CONVERSATIONS.length };
 }
+
+export {
+  getUnifyGtmStatus,
+  isUnifyGtmConfigured,
+  listUnifyGtmObjects,
+  syncTrustSignalsToUnifyGtm,
+  upsertProofToUnifyGtm
+};

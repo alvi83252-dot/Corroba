@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+import { getUnifyGtmStatus, isUnifyGtmConfigured } from './unifygtm.js';
 
-/** Simulated Mitel CloudLink / Unify Notifications API — in-memory only */
+/** UnifyGTM outbound notifications — simulated locally; live sync via Data API */
 
 export interface UnifySubscription {
   subscriptionId: string;
@@ -8,6 +9,7 @@ export interface UnifySubscription {
   subjectFilter: string;
   webhookUrl: string;
   createdAt: string;
+  source: 'unifygtm' | 'simulated';
 }
 
 export interface UnifyNotificationPayload {
@@ -20,6 +22,7 @@ export interface UnifyNotificationPayload {
 export interface UnifyEvent extends UnifyNotificationPayload {
   id: string;
   receivedAt: string;
+  source: 'unifygtm' | 'simulated';
 }
 
 export interface SubscribeRequest {
@@ -34,6 +37,7 @@ export interface SubscribeResponse {
   topic: string;
   subjectFilter: string;
   webhookUrl: string;
+  mode: 'live' | 'simulated';
 }
 
 export interface TestNotificationRequest {
@@ -45,11 +49,17 @@ export interface TestNotificationRequest {
 export interface TestNotificationResponse {
   status: 'sent';
   subscriptionsNotified: number;
+  mode: 'live' | 'simulated';
+  note?: string;
   deliveryResults?: Array<{ subscriptionId: string; webhookUrl: string; ok: boolean; status?: number }>;
 }
 
 const subscriptions: UnifySubscription[] = [];
 export const unifyEvents: UnifyEvent[] = [];
+
+export function isNotificationsLiveMode(): boolean {
+  return isUnifyGtmConfigured();
+}
 
 export function getUnifySubscriptions(): UnifySubscription[] {
   return [...subscriptions];
@@ -64,7 +74,6 @@ export function resetUnifyNotifications(): void {
   unifyEvents.length = 0;
 }
 
-/** Resolve relative webhook paths against the local API base (demo mode) */
 export function resolveWebhookUrl(webhookUrl: string): string {
   const trimmed = webhookUrl.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -79,7 +88,8 @@ export function subscribeToNotifications(body: SubscribeRequest): SubscribeRespo
     topic: body.topic,
     subjectFilter: body.subjectFilter,
     webhookUrl: body.webhookUrl,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    source: isUnifyGtmConfigured() ? 'unifygtm' : 'simulated'
   };
 
   subscriptions.push(subscription);
@@ -89,15 +99,30 @@ export function subscribeToNotifications(body: SubscribeRequest): SubscribeRespo
     subscriptionId: subscription.subscriptionId,
     topic: subscription.topic,
     subjectFilter: subscription.subjectFilter,
-    webhookUrl: subscription.webhookUrl
+    webhookUrl: subscription.webhookUrl,
+    mode: isUnifyGtmConfigured() ? 'live' : 'simulated'
   };
 }
 
-export function receiveWebhookNotification(payload: UnifyNotificationPayload): UnifyEvent {
+export async function listAllSubscriptions(): Promise<UnifySubscription[]> {
+  return getUnifySubscriptions();
+}
+
+export async function unsubscribeFromNotifications(subscriptionId: string): Promise<{ removed: boolean; mode: 'live' | 'simulated' }> {
+  const index = subscriptions.findIndex((s) => s.subscriptionId === subscriptionId);
+  if (index >= 0) subscriptions.splice(index, 1);
+  return { removed: index >= 0, mode: isUnifyGtmConfigured() ? 'live' : 'simulated' };
+}
+
+export function receiveWebhookNotification(
+  payload: UnifyNotificationPayload,
+  meta: { source?: 'unifygtm' | 'simulated' } = {}
+): UnifyEvent {
   const event: UnifyEvent = {
     id: uuidv4(),
     ...payload,
-    receivedAt: new Date().toISOString()
+    receivedAt: new Date().toISOString(),
+    source: meta.source ?? (isUnifyGtmConfigured() ? 'unifygtm' : 'simulated')
   };
 
   unifyEvents.unshift(event);
@@ -106,7 +131,6 @@ export function receiveWebhookNotification(payload: UnifyNotificationPayload): U
   return event;
 }
 
-/** Fan-out a test notification to every subscribed webhook (simulated Mitel push) */
 export async function sendTestNotification(body: TestNotificationRequest): Promise<TestNotificationResponse> {
   const payload: UnifyNotificationPayload = {
     event: body.event,
@@ -115,8 +139,18 @@ export async function sendTestNotification(body: TestNotificationRequest): Promi
     timestamp: new Date().toISOString()
   };
 
+  if (isUnifyGtmConfigured()) {
+    return {
+      status: 'sent',
+      subscriptionsNotified: subscriptions.length,
+      mode: 'live',
+      note:
+        'UnifyGTM live mode: proof records sync via Data API upsert. Use Sync to UnifyGTM on the Unify page or POST /api/unify/sync-signals.'
+    };
+  }
+
   if (subscriptions.length === 0) {
-    return { status: 'sent', subscriptionsNotified: 0, deliveryResults: [] };
+    return { status: 'sent', subscriptionsNotified: 0, mode: 'simulated', deliveryResults: [] };
   }
 
   const deliveryResults: TestNotificationResponse['deliveryResults'] = [];
@@ -127,7 +161,7 @@ export async function sendTestNotification(body: TestNotificationRequest): Promi
       try {
         const res = await fetch(targetUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Unify-Simulation': 'true' },
+          headers: { 'Content-Type': 'application/json', 'X-UnifyGTM-Simulation': 'true' },
           body: JSON.stringify(payload)
         });
         deliveryResults!.push({
@@ -147,27 +181,36 @@ export async function sendTestNotification(body: TestNotificationRequest): Promi
     })
   );
 
-  const okCount = deliveryResults!.filter((r) => r.ok).length;
-
   return {
     status: 'sent',
-    subscriptionsNotified: okCount,
+    subscriptionsNotified: deliveryResults!.filter((r) => r.ok).length,
+    mode: 'simulated',
     deliveryResults
   };
 }
 
 export function getUnifyNotificationsStatus() {
+  const gtm = getUnifyGtmStatus();
+  const live = isUnifyGtmConfigured();
+
   return {
-    service: 'unify-notifications',
-    mode: 'simulated',
-    provider: 'Mitel CloudLink (simulated)',
+    service: 'unifygtm-notifications',
+    mode: live ? 'live' : 'simulated',
+    provider: 'UnifyGTM',
+    unifygtm: {
+      configured: gtm.configured,
+      dataApiUrl: gtm.dataApiUrl,
+      proofObject: gtm.proofObject
+    },
     subscriptions: subscriptions.length,
     eventsReceived: unifyEvents.length,
     endpoints: {
       subscribe: 'POST /api/unify/notifications/subscribe',
       test: 'POST /api/unify/notifications/test',
       webhook: 'POST /api/unify/notifications/webhook',
-      events: 'GET /api/unify/notifications/events'
+      events: 'GET /api/unify/notifications/events',
+      syncSignals: 'POST /api/unify/sync-signals',
+      status: 'GET /api/unify/status'
     }
   };
 }

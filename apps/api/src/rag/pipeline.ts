@@ -1,4 +1,5 @@
 import { fetchUnifyConversations, getUnifyBaseUrl } from '../integrations/unify.js';
+import { isUnifyGtmConfigured } from '../integrations/unifygtm.js';
 import { chunkConversation, chunkText } from './chunker.js';
 import {
   clearStore,
@@ -69,7 +70,7 @@ export function getRagStatus(): RagStatus {
   return {
     documents: getDocumentCount(),
     chunks: getChunkCount(),
-    unifyConfigured: Boolean(process.env.UNIFY_API_KEY),
+    unifyConfigured: isUnifyGtmConfigured(),
     unifyBaseUrl: getUnifyBaseUrl(),
     embeddingProvider: process.env.VOYAGE_API_KEY ? 'voyage' : 'hash',
     sources,
@@ -104,7 +105,7 @@ export async function ingestUnifyConversations(force = false): Promise<RagIngest
   if (force) clearStore();
 
   const { conversations, source } = await fetchUnifyConversations();
-  lastIngestSource = source;
+  lastIngestSource = source === 'unifygtm' ? 'unify' : source;
 
   let totalChunks = 0;
   for (const conv of conversations) {
@@ -123,7 +124,7 @@ export async function ingestUnifyConversations(force = false): Promise<RagIngest
   return {
     documentsIngested: conversations.length + loadDemoSources().length,
     chunksIndexed: totalChunks + demoChunks,
-    source: force ? source : 'mixed'
+    source: force ? (source === 'unifygtm' ? 'unify' : source) : 'mixed'
   };
 }
 

@@ -5,7 +5,7 @@ export const NAV_ITEMS = [
   { href: '/validation', label: 'Proof Validation', icon: 'check' },
   { href: '/rankings', label: 'Proof Rankings', icon: 'trophy' },
   { href: '/audiences', label: 'Audience Expansion', icon: 'users' },
-  { href: '/unify', label: 'Unify Notifications', icon: 'bell' },
+  { href: '/unify', label: 'UnifyGTM', icon: 'bell' },
   { href: '/gtm', label: 'GTM Playbooks', icon: 'rocket' },
   { href: '/content', label: 'Content Studio', icon: 'pen' },
   { href: '/crm', label: 'Proof CRM', icon: 'database' },

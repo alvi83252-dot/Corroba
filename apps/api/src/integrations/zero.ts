@@ -1,3 +1,6 @@
+import { DEFAULT_WORKSPACE_ID } from '../db/connection.js';
+import { getDb } from '../db/client.js';
+
 export type ZeroSyncStatus = 'not_configured' | 'synced' | 'failed';
 
 export interface ZeroSyncResult {
@@ -34,7 +37,7 @@ export interface ZeroRecordPayload {
   metadata: Record<string, unknown>;
 }
 
-const DEFAULT_WORKSPACE_ID = 'demo-workspace-001';
+const DEFAULT_WORKSPACE = DEFAULT_WORKSPACE_ID;
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '');
@@ -59,7 +62,7 @@ function summarizeErrorBody(value: string) {
 }
 
 function buildExternalId(input: ZeroSyncInput) {
-  const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+  const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE;
   const entityId =
     input.entityId ||
     getString(input.entity?.id) ||
@@ -78,7 +81,7 @@ export function buildZeroRecordPayload(input: ZeroSyncInput): ZeroRecordPayload 
     input.workspaceId ||
     getString(entity.workspaceId) ||
     getString(source.workspaceId) ||
-    DEFAULT_WORKSPACE_ID;
+    DEFAULT_WORKSPACE;
 
   const quote = getString(entity.quote);
   const content = getString(entity.content) || getString(source.content);
@@ -111,6 +114,37 @@ export function buildZeroRecordPayload(input: ZeroSyncInput): ZeroRecordPayload 
       proofLoopEntity: entity,
       proofLoopCrmEntry: crmEntry,
       relatedSignals: input.signals
+    }
+  };
+}
+
+export function isZeroConfigured(): boolean {
+  return Boolean(process.env.ZERO_API_KEY?.trim() && process.env.ZERO_API_URL?.trim());
+}
+
+export function getZeroRecordsUrl(): string {
+  const baseUrl = trimTrailingSlash(process.env.ZERO_API_URL?.trim() || 'https://api.zero.inc');
+  const endpoint = process.env.ZERO_API_RECORDS_PATH ?? '/proofloop/records';
+  return `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+}
+
+export async function isDatabaseConnected(): Promise<boolean> {
+  const db = await getDb();
+  return db !== null;
+}
+
+export async function getZeroStatus(dbConnected: boolean) {
+  const configured = isZeroConfigured();
+  return {
+    service: 'zero' as const,
+    mode: configured ? ('live' as const) : ('demo' as const),
+    provider: 'Zero',
+    configured,
+    recordsUrl: getZeroRecordsUrl(),
+    database: {
+      configured: Boolean(process.env.DATABASE_URL || process.env.DB_URL),
+      connected: dbConnected,
+      url: process.env.DATABASE_URL ? '[DATABASE_URL set]' : process.env.DB_URL ? '[DB_URL set]' : undefined
     }
   };
 }
